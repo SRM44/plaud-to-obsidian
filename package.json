@@ -1,6 +1,6 @@
 {
 	"name": "plaud-to-obsidian",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"description": "Sync Plaud recordings (AI summaries, optional transcripts) into an Obsidian vault, using Plaud's official API.",
 	"type": "module",
 	"bin": {
