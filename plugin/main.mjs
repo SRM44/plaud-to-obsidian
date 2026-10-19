@@ -3,6 +3,7 @@
 
 import {FileSystemAdapter, Notice, Platform, Plugin, PluginSettingTab, Setting, requestUrl} from 'obsidian';
 import {NOTE_LANGUAGES, PlaudSyncError, readPlaudLogin, syncVault} from '../src/core.mjs';
+import {waitForRequest} from '../src/request.mjs';
 
 const STARTUP_DELAY_MS = 15 * 1000;
 
@@ -80,7 +81,10 @@ const DEFAULT_SETTINGS = {
 // Plaud's API does not allow browser (CORS) requests: go through Obsidian's requestUrl.
 async function obsidianFetch(url, init = {}) {
 	const body = init.body instanceof URLSearchParams ? init.body.toString() : init.body;
-	const res = await requestUrl({url, method: init.method ?? 'GET', headers: init.headers, body, throw: false});
+	const res = await waitForRequest(
+		() => requestUrl({url, method: init.method ?? 'GET', headers: init.headers, body, throw: false}),
+		init.signal
+	);
 	const headers = Object.fromEntries(Object.entries(res.headers ?? {}).map(([key, value]) => [key.toLowerCase(), value]));
 	return {
 		ok: res.status >= 200 && res.status < 300,

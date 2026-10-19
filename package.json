@@ -12,7 +12,7 @@
 	],
 	"scripts": {
 		"build": "node scripts/build-plugin.mjs",
-		"test": "node --test test/core.test.mjs test/cli.test.mjs test/plugin.test.mjs"
+		"test": "node --test test/*.test.mjs"
 	},
 	"engines": {
 		"node": ">=18"
@@ -24,5 +24,11 @@
 		"transcription",
 		"meeting-notes"
 	],
-	"license": "MIT"
+	"license": "MIT",
+	"dependencies": {
+		"proper-lockfile": "^4.1.2"
+	},
+	"devDependencies": {
+		"esbuild": "^0.28.2"
+	}
 }

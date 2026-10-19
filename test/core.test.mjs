@@ -14,11 +14,10 @@ const readState = async (vault) => JSON.parse(await readFile(stateFileFor(vault)
 test('first sync: writes ready notes, waits for the others, replaces notes the old plugin left empty', async () => {
 	const {vault, tokenFile} = await setup();
 	const stats = await sync(vault, tokenFile);
-	assert.equal(stats.created, 2);
+	assert.equal(stats.created, 1);
 	assert.equal(stats.replaced, 1);
 
 	assert.deepEqual(await notes(vault), [
-		'2026-09-16 14h47 - Nouvel enregistrement 27.md',
 		'2026-10-01 14h00 - Appel client.md',
 		'2026-10-18 09h30 - Réunion équipe budget 2027.md',
 		'plaud-2026-09-01-vieux.md'
@@ -35,8 +34,8 @@ test('first sync: writes ready notes, waits for the others, replaces notes the o
 	assert.match(backups[0], /plaud-2026-10-01-appel-client\.md$/);
 
 	const state = await readState(vault);
-	assert.deepEqual(Object.keys(state.done).sort(), ['of_ancienComplet', 'of_ancienVide', 'of_ancienneTranscription', 'of_complet']);
-	assert.deepEqual(Object.keys(state.pending).sort(), ['of_ancienVideJamaisTranscrit', 'of_transcriptionSeule', 'of_vide']);
+	assert.deepEqual(Object.keys(state.done).sort(), ['of_ancienComplet', 'of_ancienVide', 'of_complet']);
+	assert.deepEqual(Object.keys(state.pending).sort(), ['of_ancienVideJamaisTranscrit', 'of_ancienneTranscription', 'of_transcriptionSeule', 'of_vide']);
 });
 
 test('next sync: a transcript-only recording is written after 24 h, nothing is recreated', async () => {
@@ -44,14 +43,14 @@ test('next sync: a transcript-only recording is written after 24 h, nothing is r
 	await sync(vault, tokenFile);
 
 	const state = await readState(vault);
-	state.pending.of_transcriptionSeule -= 25 * 60 * 60 * 1000;
+	state.pending.of_transcriptionSeule.transcriptSince -= 25 * 60 * 60 * 1000;
 	await writeFile(stateFileFor(vault), JSON.stringify(state));
 
 	const calls = [];
 	await sync(vault, tokenFile, {fetch: fakeFetch(calls)});
 	assert.ok(existsSync(join(vault, 'Plaud', '2026-10-19 08h12.md')));
 	assert.equal(calls.filter((c) => c.includes('/files/of_complet')).length, 0);
-	assert.equal((await notes(vault)).length, 5);
+	assert.equal((await notes(vault)).length, 4);
 	const note = await readFile(join(vault, 'Plaud', '2026-10-19 08h12.md'), 'utf8');
 	assert.match(note, /## Résumé\n\n_Pas de résumé disponible\._/);
 });
@@ -92,6 +91,10 @@ test('summary only: no transcript, except as a fallback when there is no summary
 	const withSummary = await readFile(join(vault, 'Plaud', '2026-10-18 09h30 - Réunion équipe budget 2027.md'), 'utf8');
 	assert.match(withSummary, /## Résumé/);
 	assert.doesNotMatch(withSummary, /## Transcription/);
+	const state = await readState(vault);
+	state.pending.of_ancienneTranscription.transcriptSince -= 25 * 60 * 60 * 1000;
+	await writeFile(stateFileFor(vault), JSON.stringify(state));
+	await sync(vault, tokenFile, {includeTranscript: false});
 	const withoutSummary = await readFile(join(vault, 'Plaud', '2026-09-16 14h47 - Nouvel enregistrement 27.md'), 'utf8');
 	assert.match(withoutSummary, /## Transcription\n\n\*\*\[00:00\] Alice\*\*/);
 });
@@ -101,7 +104,7 @@ test('limit: creates at most n notes, the rest comes on the next sync', async ()
 	await sync(vault, tokenFile, {limit: 1});
 	assert.deepEqual((await notes(vault)).filter((n) => !n.startsWith('plaud-')), ['2026-10-18 09h30 - Réunion équipe budget 2027.md']);
 	await sync(vault, tokenFile);
-	assert.equal((await notes(vault)).filter((n) => !n.startsWith('plaud-')).length, 3);
+	assert.equal((await notes(vault)).filter((n) => !n.startsWith('plaud-')).length, 2);
 });
 
 test('since: ignores older recordings', async () => {
@@ -173,4 +176,51 @@ test('long titles are cut between words', async () => {
 	};
 	await sync(vault, tokenFile, {fetch: wrapped});
 	assert.ok((await notes(vault)).includes('2026-10-18 09h30 - Réunion Plateforme de marque, calendrier éditorial, catalogue équipements et gouvernance achats.md'));
+});
+
+test('destination and config paths cannot escape the vault, including through symlinks', async () => {
+	const {vault, root, tokenFile} = await setup();
+	const {symlink} = await import('node:fs/promises');
+	const outside = join(root, 'outside');
+	await mkdir(outside);
+	await symlink(outside, join(vault, 'linked'), 'dir');
+	for (const folder of ['../outside', '..\\outside', outside, 'C:\\outside', 'linked/new']) {
+		await assert.rejects(sync(vault, tokenFile, {folder}), (err) => err.kind === 'config');
+	}
+	await assert.rejects(sync(vault, tokenFile, {configDir: '../outside'}), (err) => err.kind === 'config');
+	assert.deepEqual(await readdir(outside), []);
+	assert.ok(!existsSync(stateFileFor(vault)));
+});
+
+test('since rejects impossible dates but accepts leap days', async () => {
+	const {vault, tokenFile} = await setup();
+	for (const since of ['2026-02-31', '2026-02-29', '2026-13-01', '2026-00-01', '2026-01-00']) {
+		await assert.rejects(sync(vault, tokenFile, {since}), (err) => err.kind === 'config');
+	}
+	await sync(vault, tokenFile, {since: '2024-02-29', dryRun: true});
+});
+
+test('old uploads wait from transcript observation; legacy pending timestamps restart safely', async () => {
+	const {vault, tokenFile} = await setup();
+	await writeFile(stateFileFor(vault), JSON.stringify({done: {}, pending: {of_ancienneTranscription: 1, of_vide: 1}}));
+	const before = Date.now();
+	await sync(vault, tokenFile);
+	const state = await readState(vault);
+	assert.ok(!state.done.of_ancienneTranscription);
+	assert.ok(state.pending.of_ancienneTranscription.transcriptSince >= before);
+	assert.equal(state.pending.of_vide.transcriptSince, null);
+	state.pending.of_ancienneTranscription.transcriptSince = Date.now() - 25 * 60 * 60 * 1000;
+	await writeFile(stateFileFor(vault), JSON.stringify(state));
+	await sync(vault, tokenFile);
+	assert.ok((await readState(vault)).done.of_ancienneTranscription);
+});
+
+test('saved note paths remain relative when the vault uses a symlink alias', async () => {
+	const {vault, root, tokenFile} = await setup();
+	const {symlink} = await import('node:fs/promises');
+	const alias = join(root, 'alias');
+	await symlink(vault, alias, 'dir');
+	const stats = await sync(alias, tokenFile);
+	assert.ok(stats.createdPaths.every((path) => !path.startsWith('..')));
+	assert.ok(Object.values((await readState(vault)).done).every(({path}) => !path.startsWith('..')));
 });

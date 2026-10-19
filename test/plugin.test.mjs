@@ -64,9 +64,9 @@ function fakeObsidian(notices) {
 	return {FileSystemAdapter, Notice: class { constructor(message) { notices.push(message); } }, Platform: {isDesktopApp: true}, Plugin, PluginSettingTab, Setting, requestUrl};
 }
 
-async function loadPlugin(outDir, notices, language = 'en') {
+async function loadPlugin(outDir, notices, language = 'en', overrides = {}) {
 	const source = await readFile(await buildPlugin(outDir), 'utf8');
-	const obsidian = fakeObsidian(notices);
+	const obsidian = {...fakeObsidian(notices), ...overrides.obsidian};
 	const nodeRequire = createRequire(import.meta.url);
 	const module = {exports: {}};
 	const window = {
@@ -76,7 +76,8 @@ async function loadPlugin(outDir, notices, language = 'en') {
 		setInterval: () => 1,
 		clearInterval() {}
 	};
-	const context = vm.createContext({module, exports: module.exports, require: (name) => (name === 'obsidian' ? obsidian : nodeRequire(name)), window, console, process, URLSearchParams, AbortSignal, setTimeout, Buffer});
+	const context = vm.createContext({module, exports: module.exports, require: (name) => (name === 'obsidian' ? obsidian : nodeRequire(name)), window, console, process, URLSearchParams, AbortSignal: overrides.AbortSignal ?? AbortSignal, setTimeout, clearTimeout, Buffer});
+	context.global = context;
 	vm.runInContext(source, context, {filename: 'main.js'});
 	return {PluginClass: module.exports, obsidian};
 }
@@ -95,10 +96,10 @@ test('the bundled plugin syncs from inside Obsidian, through requestUrl', async 
 	plugin.settings = {...plugin.settings, folder: 'Meetings/Plaud', includeTranscript: false};
 	await plugin.sync(true);
 
-	assert.deepEqual(notices, ['Synchro Plaud lancée…', 'Synchro Plaud terminée : 3 nouvelle(s) note(s), 4 enregistrement(s) en attente chez Plaud.']);
+	assert.deepEqual(notices, ['Synchro Plaud lancée…', 'Synchro Plaud terminée : 2 nouvelle(s) note(s), 5 enregistrement(s) en attente chez Plaud.']);
 	const created = (await readdir(join(vault, 'Meetings', 'Plaud'))).sort();
-	assert.deepEqual(created, ['2026-09-16 14h47 - Nouvel enregistrement 27.md', '2026-10-01 14h00 - Appel client.md', '2026-10-18 09h30 - Réunion équipe budget 2027.md']);
-	const note = await readFile(join(vault, 'Meetings', 'Plaud', created[2]), 'utf8');
+	assert.deepEqual(created, ['2026-10-01 14h00 - Appel client.md', '2026-10-18 09h30 - Réunion équipe budget 2027.md']);
+	const note = await readFile(join(vault, 'Meetings', 'Plaud', created[1]), 'utf8');
 	assert.match(note, /## Résumé/);
 	assert.doesNotMatch(note, /## Transcription/);
 });
@@ -113,4 +114,24 @@ test('the bundled plugin explains how to log in when there is no Plaud session',
 	await plugin.onload();
 	await plugin.sync(false);
 	assert.deepEqual(notices, ['Plaud: not logged in, or the session expired. In a terminal, run: plaud login (Plaud official CLI).']);
+});
+
+test('a stalled Obsidian request times out and releases both the running flag and vault lock', async () => {
+	const {vault, root} = await setup();
+	const notices = [];
+	const {PluginClass, obsidian} = await loadPlugin(join(root, 'dist'), notices, 'en', {
+		obsidian: {requestUrl: () => new Promise(() => {})},
+		AbortSignal: {timeout: () => {
+			const controller = new AbortController();
+			setTimeout(() => controller.abort(new Error('request timed out')), 5);
+			return controller.signal;
+		}}
+	});
+	const plugin = new PluginClass({vault: {adapter: new obsidian.FileSystemAdapter(vault), configDir: '.obsidian'}, workspace: {onLayoutReady() {}}}, {});
+	await plugin.onload();
+	await plugin.sync(true);
+	assert.equal(plugin.running, false);
+	assert.ok(notices.some((message) => message.includes('sync failed')));
+	const {access} = await import('node:fs/promises');
+	await assert.rejects(access(join(vault, '.obsidian', 'plaud-to-obsidian.json.lock')), {code: 'ENOENT'});
 });

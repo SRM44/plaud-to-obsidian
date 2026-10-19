@@ -103,7 +103,9 @@ The file name is `2026-10-01 14.02 - Weekly team meeting.md`, or `14h02` with th
 ## How it works
 
 - **Finding what to import.** The plugin lists your recordings through the official API and fetches the details of the ones it has not handled yet.
-- **When a recording is ready.** It counts as ready when Plaud's summary exists, or when only a transcript has existed for 24 hours. Otherwise it stays pending and is checked again on the next sync.
+- **When a recording is ready.** It counts as ready when Plaud's summary exists, or 24 hours after this tool first observes a transcript without a summary. The upload date does not shorten this wait. Otherwise it stays pending and is checked again on the next sync. Pending entries from older versions start this observation window again; imported notes are unaffected.
+- **Concurrent imports.** A filesystem lock is renewed every 10 seconds during an import. A lock abandoned after a crash can be recovered after 30 minutes. This coordinates processes sharing a local filesystem; cloud vault sync does not provide a distributed lock across computers.
+- **Destination paths.** The destination and configuration folders must stay inside the vault, including when existing folders are symbolic links.
 - **Sync state.** Handled and pending recordings are tracked in `<vault>/.obsidian/plaud-to-obsidian.json`. This file travels with your vault, so several computers do not duplicate notes.
 - **Privacy.** Requests only go to Plaud: `platform.plaud.ai` and Plaud's file storage. There is no telemetry, and everything else stays in your vault.
 
@@ -141,14 +143,21 @@ The options are remembered in `~/.plaud-to-obsidian.json`. Exit codes:
 
 ## Development
 
-The project has no dependencies.
+The CLI uses `proper-lockfile` for renewable filesystem locks. The plugin bundles it, so manual plugin installation still needs only `main.js` and `manifest.json`. Development uses `esbuild` to bundle standard JavaScript modules.
 
 ```bash
+npm ci
 npm test         # engine, command line, and the bundled plugin loaded in a fake Obsidian
 npm run build    # → dist/main.js and dist/manifest.json
 ```
 
-- `src/core.mjs`: sync engine, shared by the plugin and the command line
+- `src/core.mjs`: sync orchestration and public entry point shared by the plugin and command line
+- `src/plaud.mjs`: API requests and authentication
+- `src/render.mjs`: Markdown rendering and content extraction
+- `src/vault.mjs`: note discovery, writing, migration and destination validation
+- `src/lock.mjs`: renewable import lock
+- `src/json.mjs`, `src/errors.mjs`, `src/utils.mjs`: shared storage and helpers
+- `src/request.mjs`: bounded waiting for Obsidian requests (the underlying request cannot be cancelled)
 - `plugin/main.mjs`: Obsidian plugin (settings, timer, notices)
 - `cli.mjs`: command line
 - `scripts/build-plugin.mjs`: bundles the plugin into the single `main.js` Obsidian loads
