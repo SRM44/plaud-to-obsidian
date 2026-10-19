@@ -133,5 +133,20 @@ test('a stalled Obsidian request times out and releases both the running flag an
 	assert.equal(plugin.running, false);
 	assert.ok(notices.some((message) => message.includes('sync failed')));
 	const {access} = await import('node:fs/promises');
-	await assert.rejects(access(join(vault, '.obsidian', 'plaud-to-obsidian.json.lock')), {code: 'ENOENT'});
+	const {lockFileFor} = await import('../src/core.mjs');
+	await assert.rejects(access(await lockFileFor(vault)), {code: 'ENOENT'});
+});
+
+test('automatic syncs show the login notice once, not on every interval', async () => {
+	const {vault, root, tokenFile} = await setup();
+	const {rm} = await import('node:fs/promises');
+	await rm(tokenFile);
+	const notices = [];
+	const {PluginClass, obsidian} = await loadPlugin(join(root, 'dist'), notices, 'en');
+	const plugin = new PluginClass({vault: {adapter: new obsidian.FileSystemAdapter(vault), configDir: '.obsidian'}, workspace: {onLayoutReady() {}}}, {});
+	await plugin.onload();
+	await plugin.sync(false);
+	await plugin.sync(false);
+	await plugin.sync(false);
+	assert.equal(notices.length, 1);
 });

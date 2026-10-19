@@ -6,6 +6,8 @@ import {NOTE_LANGUAGES, PlaudSyncError, readPlaudLogin, syncVault} from '../src/
 import {waitForRequest} from '../src/request.mjs';
 
 const STARTUP_DELAY_MS = 15 * 1000;
+// Automatic syncs stay quiet about network errors until they fail this many times in a row.
+const NETWORK_FAILURES_BEFORE_NOTICE = 3;
 
 const UI = {
 	en: {
@@ -98,6 +100,8 @@ async function obsidianFetch(url, init = {}) {
 export default class PlaudRecordingsSyncPlugin extends Plugin {
 	running = false;
 	timer = null;
+	authNotified = false;
+	networkFailures = 0;
 
 	get ui() {
 		return UI[uiLanguage()];
@@ -162,16 +166,23 @@ export default class PlaudRecordingsSyncPlugin extends Plugin {
 				fetch: obsidianFetch,
 				log: (message) => console.log(`[plaud-recordings-sync] ${message}`)
 			});
+			this.authNotified = false;
+			this.networkFailures = 0;
 			if (manual) new Notice(this.ui.done(stats), 10000);
 			else if (stats.created + stats.replaced > 0) new Notice(this.ui.newNotes(stats.created + stats.replaced, this.settings.folder), 8000);
 		} catch (err) {
 			if (err instanceof PlaudSyncError && err.kind === 'busy') {
 				if (manual) new Notice(this.ui.busy);
 			} else if (err instanceof PlaudSyncError && err.kind === 'auth') {
-				new Notice(this.ui.auth, manual ? 15000 : 0);
+				// Automatic syncs show this sticky notice once, not again on every interval.
+				if (manual) new Notice(this.ui.auth, 15000);
+				else if (!this.authNotified) new Notice(this.ui.auth, 0);
+				this.authNotified = true;
 			} else {
 				console.error('[plaud-recordings-sync]', err);
-				if (manual || !(err instanceof PlaudSyncError && err.kind === 'network')) {
+				const network = err instanceof PlaudSyncError && err.kind === 'network';
+				if (network) this.networkFailures++;
+				if (manual || !network || this.networkFailures === NETWORK_FAILURES_BEFORE_NOTICE) {
 					new Notice(this.ui.failed(err.message), 15000);
 				}
 			}

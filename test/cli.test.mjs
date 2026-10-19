@@ -4,7 +4,7 @@ import {mkdir, readdir, readFile, writeFile} from 'node:fs/promises';
 import {existsSync} from 'node:fs';
 import {join} from 'node:path';
 import {fakeFetch, setup} from './helpers.mjs';
-import {stateFileFor} from '../src/core.mjs';
+import {lockFileFor, stateFileFor} from '../src/core.mjs';
 import {obsidianRegistryPath, run} from '../cli.mjs';
 
 process.env.PLAUD_SYNC_SPACING_MS = '0';
@@ -54,7 +54,7 @@ test('exit codes: 2 when not logged in, 0 when another sync is running, 1 on bad
 	assert.equal(await run(['--vault', vault]), 2);
 
 	await setup();
-	await mkdir(`${stateFileFor(vault)}.lock`);
+	await mkdir(await lockFileFor(vault), {recursive: true});
 	assert.equal(await run(['--vault', vault]), 0);
 	assert.equal(await run(['--vault', vault, '--bogus']), 1);
 	assert.equal(await run(['--help']), 0);

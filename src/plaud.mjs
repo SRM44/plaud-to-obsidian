@@ -39,7 +39,8 @@ export async function getAccessToken(ctx) {
 	} catch (err) {
 		throw new PlaudSyncError('network', `Cannot reach Plaud to refresh the session (${err.message}).`);
 	}
-	if (res.status === 401 || res.status === 403) {
+	// OAuth servers answer 400 (invalid_grant) for an expired or revoked refresh token.
+	if (res.status === 400 || res.status === 401 || res.status === 403) {
 		throw new PlaudSyncError('auth', 'Plaud session expired. Run `plaud login` again.');
 	}
 	if (!res.ok) {
@@ -113,7 +114,9 @@ export async function listAllFiles(token, sinceMs, ctx) {
 		const result = await api(`/open/third-party/files/?${params}`, token, ctx);
 		const data = Array.isArray(result?.data) ? result.data : [];
 		files.push(...data);
-		if (data.length < PAGE_SIZE) break;
+		// The server may cap the page size: compare with the size it reports, not the one asked for.
+		const pageSize = Number(result?.page_size) || PAGE_SIZE;
+		if (data.length === 0 || data.length < pageSize) break;
 	}
 	return files;
 }

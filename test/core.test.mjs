@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import {mkdir, readdir, readFile, writeFile} from 'node:fs/promises';
 import {existsSync} from 'node:fs';
 import {join} from 'node:path';
-import {fakeFetch, setup} from './helpers.mjs';
-import {PlaudSyncError, stateFileFor, syncVault} from '../src/core.mjs';
+import {fakeFetch, files, setup} from './helpers.mjs';
+import {PlaudSyncError, lockFileFor, stateFileFor, syncVault} from '../src/core.mjs';
 
 const sync = (vault, tokenFile, options = {}) =>
 	syncVault({vaultPath: vault, tokenFile, fetch: fakeFetch(), requestSpacingMs: 0, language: 'fr', ...options});
@@ -155,8 +155,9 @@ test('rate limit (HTTP 429): waits and retries instead of failing', async () => 
 
 test('lock: a second simultaneous sync is refused, and the lock is released afterwards', async () => {
 	const {vault, tokenFile} = await setup();
-	const lock = `${stateFileFor(vault)}.lock`;
-	await mkdir(lock);
+	const lock = await lockFileFor(vault);
+	assert.ok(!lock.startsWith(vault), 'the lock must not be synced with the vault');
+	await mkdir(lock, {recursive: true});
 	await assert.rejects(sync(vault, tokenFile), (err) => err instanceof PlaudSyncError && err.kind === 'busy');
 	const {rm} = await import('node:fs/promises');
 	await rm(lock, {recursive: true});
@@ -223,4 +224,46 @@ test('saved note paths remain relative when the vault uses a symlink alias', asy
 	const stats = await sync(alias, tokenFile);
 	assert.ok(stats.createdPaths.every((path) => !path.startsWith('..')));
 	assert.ok(Object.values((await readState(vault)).done).every(({path}) => !path.startsWith('..')));
+});
+
+test('a sync that stops early still saves the notes written and transcripts seen so far', async () => {
+	const {vault, tokenFile} = await setup();
+	const normal = fakeFetch();
+	const fetch = async (url, init) =>
+		String(url).endsWith('/files/of_ancienVideJamaisTranscrit') ? new Response('{}', {status: 401}) : normal(url, init);
+	await assert.rejects(sync(vault, tokenFile, {fetch}), (err) => err instanceof PlaudSyncError && err.kind === 'auth');
+
+	const state = await readState(vault);
+	assert.ok(state.done.of_complet);
+	assert.equal(typeof state.pending.of_transcriptionSeule.transcriptSince, 'number');
+	assert.ok(existsSync(join(vault, 'Plaud', '2026-10-18 09h30 - Réunion équipe budget 2027.md')));
+});
+
+test('a refresh token refused with HTTP 400 is reported as an expired session', async () => {
+	const {vault, tokenFile} = await setup({expired: true});
+	const fetch = async () => new Response('{"error":"invalid_grant"}', {status: 400});
+	await assert.rejects(sync(vault, tokenFile, {fetch}), (err) => err instanceof PlaudSyncError && err.kind === 'auth');
+});
+
+test('pagination follows the page size reported by the server', async () => {
+	const {vault, tokenFile} = await setup();
+	const normal = fakeFetch();
+	const all = Object.values(files).map(({id, name, created_at, duration}) => ({id, name, created_at, duration}));
+	const fetch = async (url, init) => {
+		const u = new URL(url);
+		if (u.pathname !== '/developer/api/open/third-party/files/') return normal(url, init);
+		const page = Number(u.searchParams.get('page'));
+		return new Response(JSON.stringify({data: all.slice((page - 1) * 2, page * 2), page, page_size: 2}), {status: 200});
+	};
+	const stats = await sync(vault, tokenFile, {fetch, dryRun: true});
+	assert.equal(stats.listed, all.length);
+});
+
+test('adopting an existing note clears its pending entry', async () => {
+	const {vault, tokenFile} = await setup();
+	await writeFile(stateFileFor(vault), JSON.stringify({done: {}, pending: {of_ancienComplet: {transcriptSince: null}}}));
+	await sync(vault, tokenFile);
+	const state = await readState(vault);
+	assert.ok(state.done.of_ancienComplet);
+	assert.equal(state.pending.of_ancienComplet, undefined);
 });
