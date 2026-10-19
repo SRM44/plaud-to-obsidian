@@ -1,0 +1,10 @@
+{
+	"id": "plaud-recordings-sync",
+	"name": "Plaud Recordings Sync",
+	"version": "1.0.0",
+	"minAppVersion": "1.0.0",
+	"description": "Creates one note per Plaud recording (AI summary, optional transcript) using Plaud's official API.",
+	"author": "Ricomoni",
+	"isDesktopOnly": true,
+	"authorUrl": "https://github.com/SRM44"
+}

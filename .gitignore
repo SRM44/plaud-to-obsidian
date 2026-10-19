@@ -1,0 +1,13 @@
+# Build output (attached to GitHub releases instead)
+dist/
+
+# Personal data: never commit
+config.json
+state.json
+sauvegardes/
+*.lock
+.plaud-to-obsidian.json
+
+node_modules/
+.DS_Store
+.claude/

@@ -1,0 +1,28 @@
+{
+	"name": "plaud-to-obsidian",
+	"version": "1.0.0",
+	"description": "Sync Plaud recordings (AI summaries, optional transcripts) into an Obsidian vault, using Plaud's official API.",
+	"type": "module",
+	"bin": {
+		"plaud-to-obsidian": "cli.mjs"
+	},
+	"files": [
+		"cli.mjs",
+		"src/"
+	],
+	"scripts": {
+		"build": "node scripts/build-plugin.mjs",
+		"test": "node --test test/core.test.mjs test/cli.test.mjs test/plugin.test.mjs"
+	},
+	"engines": {
+		"node": ">=18"
+	},
+	"keywords": [
+		"plaud",
+		"obsidian",
+		"obsidian-plugin",
+		"transcription",
+		"meeting-notes"
+	],
+	"license": "MIT"
+}
